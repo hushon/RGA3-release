@@ -134,10 +134,10 @@ We also provide the evaluation scripts of several baseline methods in the `basel
 
 If you find this paper or repo helpful, you can use the following format to cite:
 ```bibtex
-@inproceedings{wang2025object,
+@article{wang2025object,
   title={Object-centric Video Question Answering with Visual Grounding and Referring},
   author={Wang, Haochen and Chen, Qirui and Yan, Cilin and Cai, Jiayin and Jiang, Xiaolong and Hu, Yao and Xie, Weidi and Gavves, Stratis},
-  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  journal={arXiv preprint arXiv:2507.19599},
   year={2025}
 }
 ```
