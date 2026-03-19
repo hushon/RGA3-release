@@ -4,6 +4,30 @@ import sys
 import json
 from glob import glob
 import hashlib
+import time
+import types
+
+# Disable flash attention BEFORE any transformers import
+# Create fake module to prevent flash_attn binary from being loaded
+os.environ["TRANSFORMERS_NO_FLASH_ATTN_2"] = "1"
+
+# Pre-register fake modules before transformers tries to load them
+fake_module = types.ModuleType('flash_attn')
+sys.modules['flash_attn'] = fake_module
+sys.modules['flash_attn_2_cuda'] = types.ModuleType('flash_attn_2_cuda')
+sys.modules['flash_attn.bert_padding'] = types.ModuleType('bert_padding')
+
+# Also disable in transformers utilities before import
+import importlib.util
+
+# Mock is_flash_attn_2_available before transformers even loads
+_original_find_spec = importlib.util.find_spec
+def _patched_find_spec(name, package=None):
+    if 'flash_attn' in name:
+        return None
+    return _original_find_spec(name, package)
+
+importlib.util.find_spec = _patched_find_spec
 
 import gradio as gr
 import numpy as np
@@ -16,6 +40,9 @@ from tqdm import tqdm
 
 from model.qwen_2_5_vl_sam2 import UniGRConfig, UniGRModel
 from utils.utils import DirectResize, get_sparse_indices, dict_to_cuda, preprocess
+from model.STOM import STOM
+from utils.visual_prompt_generator import blend_image_from_mask, video_blending_keyframes, color_pool, words_shape
+from pycocotools import mask as coco_mask
 
 
 
@@ -25,6 +52,12 @@ def parse_args():
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument("--num_frames", default=16, type=int)
     parser.add_argument("--num_frames_mllm", default=4, type=int)
+    parser.add_argument("--sam_max_frames", default=24, type=int,
+                        help="Maximum number of frames used for SAM-based segmentation in visual prompting")
+    parser.add_argument("--stom_max_frames", default=48, type=int,
+                        help="Maximum number of frames used for STOM/static visual-prompt video creation")
+    parser.add_argument("--qa_max_frames", default=16, type=int,
+                        help="Maximum number of frames used for QA inference after visual prompting")
     parser.add_argument("--max_pixels", default=384*28*28, type=int)
     parser.add_argument("--image_size", default=1024, type=int)
     parser.add_argument("--precision", default="bf16", type=str)
@@ -47,17 +80,37 @@ model_args = {
 }
 
 config = UniGRConfig.from_pretrained(args.version, **model_args)
-model = UniGRModel.from_pretrained(
-    args.version,
-    config=config,
-    torch_dtype=torch.bfloat16,
-    attn_implementation="flash_attention_2",
-    low_cpu_mem_usage=False,
-)
+try:
+    model = UniGRModel.from_pretrained(
+        args.version,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+        low_cpu_mem_usage=False,
+    )
+except (ImportError, RuntimeError) as e:
+    print(f"Flash attention 2 failed: {e}")
+    print("Falling back to default attention implementation...")
+    model = UniGRModel.from_pretrained(
+        args.version,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=False,
+    )
 
 model = model.bfloat16().cuda().eval()
 transform = DirectResize(args.image_size)
 print("Model loaded successfully!")
+
+# Initialize STOM for temporal propagation
+print("Loading STOM for temporal propagation...")
+try:
+    propagator = STOM(device="cuda:0")
+    use_stom = True
+except Exception as e:
+    print(f"Warning: STOM initialization failed: {e}. Visual prompting will use static blending.")
+    propagator = None
+    use_stom = False
 
 
 class VideoState:
@@ -105,6 +158,365 @@ def process_video_frames(video_path, max_frames=50):
     except Exception as e:
         print(f"Error processing video: {e}")
         return None
+
+def question_to_segmentation_prompt(question: str) -> str:
+    """
+    Convert NExT-QA style question to segmentation instruction.
+    E.g., "Where is the cat sitting on?" -> "Can you segment the key object mentioned in this question? Question: Where is the cat sitting on?"
+    """
+    question = question.strip()
+    prompt = f"Can you segment the key object mentioned in this question? Question: {question}"
+    return prompt
+
+
+def process_video_with_visual_prompting(video_file, question_text, progress=gr.Progress()):
+    """
+    End-to-end pipeline: Question -> Segmentation Prompt -> Single-frame Segmentation -> 
+    STOM Propagation -> Visual Prompt Creation -> QA Inference
+    """
+    try:
+        if not video_file:
+            return None, None, None, "Please upload a video file."
+        
+        if not question_text or not question_text.strip():
+            return None, None, None, "Please enter a question."
+        
+        progress(0, desc="Loading video...")
+        
+        # Load and process video
+        cap = cv2.VideoCapture(video_file)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        if total_frames == 0:
+            return None, None, None, "Failed to read video frames."
+        
+        # Get sparse frames for MLLM
+        sparse_idxs = get_sparse_indices(total_frames, args.num_frames_mllm)
+        
+        progress(0.05, desc="Loading frames...")
+        
+        frames_list = []
+        for frm_idx in sparse_idxs:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frm_idx)
+            ret, frame = cap.read()
+            if ret:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                image_pil = Image.fromarray(frame_rgb)
+                frames_list.append(image_pil)
+        
+        # Select middle frame for segmentation
+        key_frame_idx = total_frames // 2
+        cap.set(cv2.CAP_PROP_POS_FRAMES, key_frame_idx)
+        ret, key_frame_bgr = cap.read()
+        if not ret:
+            return None, None, None, f"Failed to read frame at index {key_frame_idx}"
+        
+        key_frame_rgb = cv2.cvtColor(key_frame_bgr, cv2.COLOR_BGR2RGB)
+        key_frame_pil = Image.fromarray(key_frame_rgb)
+        
+        progress(0.15, desc="Preparing frames for segmentation...")
+        
+        # Load a bounded number of frames for SAM2 processing to avoid OOM
+        sam_num_frames = min(total_frames, args.sam_max_frames)
+        sam_frame_indices = get_sparse_indices(total_frames, sam_num_frames)
+        if key_frame_idx not in sam_frame_indices:
+            sam_frame_indices.append(key_frame_idx)
+            sam_frame_indices = sorted(set(sam_frame_indices))
+
+        # Find nearest sampled frame to the true key frame index
+        key_frame_pos_in_sam = min(
+            range(len(sam_frame_indices)),
+            key=lambda i: abs(sam_frame_indices[i] - key_frame_idx)
+        )
+
+        image_list_sam, image_list_np = [], []
+        original_size_list = []
+        resize_list = []
+        
+        for frm_idx in sam_frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frm_idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            image_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            original_size_list.append(image_np.shape[:2])
+            
+            image = transform.apply_image(image_np)
+            resize_list.append(image.shape[:2])
+            
+            image_tensor = preprocess(torch.from_numpy(image).permute(2, 0, 1).contiguous()).unsqueeze(0).cuda()
+            image_tensor = image_tensor.bfloat16()
+            
+            image_list_sam.append(image_tensor)
+            image_list_np.append(image_np)
+        
+        cap.release()
+        
+        progress(0.25, desc="Rewriting question as segmentation prompt...")
+        
+        # Step 1: Convert question to segmentation prompt
+        seg_prompt = question_to_segmentation_prompt(question_text)
+        
+        progress(0.35, desc="Preparing model inputs...")
+        
+        # Step 2: Prepare messages for segmentation
+        messages = [
+            {"role": "user", "content": [
+                {"type": "video", "video": frames_list, "max_pixels": args.max_pixels},
+                {"type": "text", "text": seg_prompt}
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Sure, [SEG]."}
+            ]}
+        ]
+        
+        text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False
+        )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        inputs = processor(
+            text=text,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+            **video_kwargs,
+        )
+        
+        inputs = dict_to_cuda(inputs)
+        
+        progress(0.45, desc="Running segmentation...")
+        
+        # Step 3: Run segmentation
+        input_ids = inputs['input_ids']
+        attention_mask = inputs['attention_mask'] if 'attention_mask' in inputs else None
+        pixel_values = inputs['pixel_values'].bfloat16() if 'pixel_values' in inputs else None
+        pixel_values_videos = inputs['pixel_values_videos'].bfloat16() if 'pixel_values_videos' in inputs else None
+        image_grid_thw = inputs['image_grid_thw'] if 'image_grid_thw' in inputs else None
+        video_grid_thw = inputs['video_grid_thw'] if 'video_grid_thw' in inputs else None
+        second_per_grid_ts = inputs['second_per_grid_ts'] if 'second_per_grid_ts' in inputs else None
+        
+        image_sam = torch.stack(image_list_sam, dim=1)
+
+        with torch.inference_mode():
+            output_ids, pred_masks = model.evaluate(
+                input_ids,
+                attention_mask,
+                pixel_values,
+                pixel_values_videos,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts,
+                image_sam,
+                resize_list,
+                original_size_list,
+            )
+        
+        progress(0.60, desc="Processing segmentation results...")
+        
+        # Step 4: Extract mask from segmentation results
+        if len(pred_masks) == 0 or pred_masks[0].shape[0] == 0:
+            return None, None, None, "No segmentation mask found. Try a different question."
+        
+        pred_mask_vid = pred_masks[0].detach().cpu().numpy()
+        
+        # Get mask near the key frame from sampled SAM frames
+        if key_frame_pos_in_sam < pred_mask_vid.shape[0]:
+            key_mask = pred_mask_vid[key_frame_pos_in_sam] > 0
+        else:
+            key_mask = pred_mask_vid[0] > 0
+        
+        mask_area = np.sum(key_mask)
+        if mask_area < 100:
+            return None, None, None, f"Segmentation mask too small ({int(mask_area)} pixels). Try a different question."
+        
+        progress(0.70, desc="Creating visual prompt...")
+        
+        # Step 5: Create visual prompt overlay on key frame
+        color = "red"
+        # Use true mask overlay (not bbox outline) for key-frame visualization.
+        shape = "mask"
+        blended_frame = blend_image_from_mask(key_frame_pil.convert('RGB'), key_mask.astype(np.float32), color, shape)
+
+        # Free large segmentation tensors before STOM/QA to reduce peak VRAM
+        del image_sam, image_list_sam, image_list_np
+        del input_ids, attention_mask, pixel_values, pixel_values_videos
+        del image_grid_thw, video_grid_thw, second_per_grid_ts, output_ids, pred_masks
+        if 'inputs' in locals():
+            del inputs
+        torch.cuda.empty_cache()
+        
+        # Step 6: Create frames with visual prompt
+        if use_stom and propagator is not None:
+            progress(0.75, desc="Propagating visual prompt across frames...")
+            try:
+                cap = cv2.VideoCapture(video_file)
+                prop_num_frames = min(total_frames, args.stom_max_frames)
+                prop_frame_indices = get_sparse_indices(total_frames, prop_num_frames)
+                if key_frame_idx not in prop_frame_indices:
+                    prop_frame_indices.append(key_frame_idx)
+                    prop_frame_indices = sorted(set(prop_frame_indices))
+                key_frame_pos_in_prop = min(
+                    range(len(prop_frame_indices)),
+                    key=lambda i: abs(prop_frame_indices[i] - key_frame_idx)
+                )
+                is_key_frame = [i == key_frame_pos_in_prop for i in range(len(prop_frame_indices))]
+                
+                all_frames = []
+                all_masks = []
+                for i, frame_idx in enumerate(prop_frame_indices):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    if ret:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        all_frames.append(Image.fromarray(frame_rgb))
+                        
+                        if i == key_frame_pos_in_prop:
+                            all_masks.append(key_mask.astype(np.float32))
+                        else:
+                            all_masks.append(np.zeros_like(key_mask, dtype=np.float32))
+                
+                cap.release()
+                
+                blended_frames, vip_img = video_blending_keyframes(
+                    all_frames, all_masks, is_key_frame, color, shape, return_vip_img=True
+                )
+                
+                if vip_img is not None and np.any(np.array(vip_img)[:, :, 3] > 0):
+                    propagated_frames = propagator.propagate_in_video(
+                        all_frames, vip_img, is_key_frame.index(True), shape=shape
+                    )
+                else:
+                    propagated_frames = blended_frames
+                
+            except Exception as e:
+                print(f"STOM propagation failed: {e}. Using static blending.")
+                cap = cv2.VideoCapture(video_file)
+                prop_num_frames = min(total_frames, args.stom_max_frames)
+                prop_frame_indices = get_sparse_indices(total_frames, prop_num_frames)
+                if key_frame_idx not in prop_frame_indices:
+                    prop_frame_indices.append(key_frame_idx)
+                    prop_frame_indices = sorted(set(prop_frame_indices))
+                key_frame_pos_in_prop = min(
+                    range(len(prop_frame_indices)),
+                    key=lambda i: abs(prop_frame_indices[i] - key_frame_idx)
+                )
+                propagated_frames = []
+                for i, frame_idx in enumerate(prop_frame_indices):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    if ret:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frame_pil = Image.fromarray(frame_rgb)
+                        if i == key_frame_pos_in_prop:
+                            propagated_frames.append(blended_frame)
+                        else:
+                            propagated_frames.append(frame_pil)
+                cap.release()
+        else:
+            cap = cv2.VideoCapture(video_file)
+            prop_num_frames = min(total_frames, args.stom_max_frames)
+            prop_frame_indices = get_sparse_indices(total_frames, prop_num_frames)
+            if key_frame_idx not in prop_frame_indices:
+                prop_frame_indices.append(key_frame_idx)
+                prop_frame_indices = sorted(set(prop_frame_indices))
+            key_frame_pos_in_prop = min(
+                range(len(prop_frame_indices)),
+                key=lambda i: abs(prop_frame_indices[i] - key_frame_idx)
+            )
+            propagated_frames = []
+            for i, frame_idx in enumerate(prop_frame_indices):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                if ret:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame_pil = Image.fromarray(frame_rgb)
+                    if i == key_frame_pos_in_prop:
+                        propagated_frames.append(blended_frame)
+                    else:
+                        propagated_frames.append(frame_pil)
+            cap.release()
+        
+        progress(0.80, desc="Creating output video...")
+        
+        vip_basename = f"vip_video_{int(time.time() * 1000)}_{hashlib.md5((video_file + question_text).encode('utf-8')).hexdigest()[:8]}.mp4"
+        vip_video_path = os.path.join(args.vis_save_path, vip_basename)
+        vip_video_path = create_video_from_frames(propagated_frames, vip_video_path)
+        if not vip_video_path:
+            return None, blended_frame, None, "Failed to create visual prompt video file."
+        vip_video_path = os.path.abspath(vip_video_path)
+        
+        torch.cuda.empty_cache()
+        
+        progress(0.90, desc="Running QA inference...")
+        
+        # Step 7: Run QA inference with visual prompt
+        qa_prompt = f"Look at the marked region and then answer the question. {question_text}"
+
+        # Bound QA frames to avoid large video tensors on GPU
+        qa_num_frames = min(len(propagated_frames), args.qa_max_frames)
+        qa_frame_indices = get_sparse_indices(len(propagated_frames), qa_num_frames)
+        qa_frames = [propagated_frames[i] for i in qa_frame_indices]
+        
+        qa_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": qa_frames, "max_pixels": args.max_pixels},
+                    {"type": "text", "text": qa_prompt},
+                ],
+            }
+        ]
+        
+        qa_text = processor.apply_chat_template(qa_messages, tokenize=False, add_generation_prompt=True)
+        qa_image_inputs, qa_video_inputs, qa_video_kwargs = process_vision_info(qa_messages, return_video_kwargs=True)
+        qa_inputs = processor(
+            text=qa_text,
+            images=qa_image_inputs,
+            videos=qa_video_inputs,
+            padding=False,
+            return_tensors="pt",
+            **qa_video_kwargs,
+        )
+        qa_inputs = qa_inputs.to("cuda")
+        
+        with torch.inference_mode():
+            generated_ids = model.generate(
+                **qa_inputs,
+                max_new_tokens=128,
+                do_sample=False,
+                num_beams=1,
+            )
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(qa_inputs.input_ids, generated_ids)
+            ]
+            qa_output = processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0]
+        
+        torch.cuda.empty_cache()
+        
+        progress(1.0, desc="Complete!")
+        
+        status_msg = f"""✅ Visual Prompting Complete!
+
+📝 Original Question: {question_text}
+🔄 Segmentation Prompt: {seg_prompt}
+🎯 Key Frame Index: {key_frame_idx}/{total_frames}
+📊 Mask Area: {int(mask_area)} pixels
+🎬 Propagation: {'STOM (with temporal coherence)' if use_stom and propagator else 'Static (key frame only)'}
+
+🤖 Answer: {qa_output}"""
+        
+        return vip_video_path, blended_frame, qa_output, status_msg
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None, None, None, f"Error during visual prompting: {str(e)}"
 
 def create_video_from_frames(frames, output_path, fps=15):
 
@@ -586,13 +998,9 @@ with gr.Blocks(title=title, theme=gr.themes.Soft()) as demo:
                                 default_size=5, 
                                 colors=["#FF0000", "#0000FF", "#00FF00", "#FFFF00", "#FF00FF", "#FFA500"]
                             ),
-                            # sources=["upload"],
                             interactive=True,
                             height=300,
-                            layers=False,
-                            transforms=[],
-                            show_download_button=False,
-                            show_share_button=False
+                            layers=False
                         )
 
                     with gr.Group():
@@ -709,6 +1117,61 @@ with gr.Blocks(title=title, theme=gr.themes.Soft()) as demo:
                 fn=process_video_segmentation,
                 inputs=[seg_video_input, seg_query_input],
                 outputs=[seg_result_video, mask_result_video, seg_status_text]
+            )
+
+        with gr.TabItem("✨ Visual Prompting for QA"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    with gr.Group():
+                        gr.Markdown("### 📤 Inputs")
+                        vip_video_input = gr.File(
+                            label="Upload Video File",
+                            file_types=[".mp4", ".avi", ".mov"],
+                            type="filepath",
+                        )
+                        vip_question_input = gr.Textbox(
+                            lines=3,
+                            placeholder="Enter a question (e.g., 'Where is the cat?', 'What is the person doing?')...",
+                            label="Question",
+                        )
+                        vip_submit_btn = gr.Button("🚀 Generate & Answer", variant="primary", size="lg")
+                
+                with gr.Column(scale=2):
+                    with gr.Group():
+                        gr.Markdown("### 🎬 Visual Prompt Video")
+                        vip_result_video = gr.Video(
+                            label="Video with Visual Prompt",
+                            interactive=False,
+                            height=300
+                        )
+                        
+                        gr.Markdown("### 🖼️ Key Frame with Overlay")
+                        vip_key_frame = gr.Image(
+                            label="Key Frame Segmentation Overlay",
+                            interactive=False,
+                            height=250
+                        )
+                    
+                    with gr.Group():
+                        gr.Markdown("### 💬 QA Result")
+                        vip_answer_output = gr.Textbox(
+                            lines=2,
+                            label="Answer",
+                            interactive=False,
+                            placeholder="AI answer will appear here..."
+                        )
+                        
+                        vip_status_text = gr.Textbox(
+                            lines=6,
+                            label="Process Details",
+                            interactive=False,
+                            placeholder="Status will appear here..."
+                        )
+            
+            vip_submit_btn.click(
+                fn=process_video_with_visual_prompting,
+                inputs=[vip_video_input, vip_question_input],
+                outputs=[vip_result_video, vip_key_frame, vip_answer_output, vip_status_text]
             )
 
 
