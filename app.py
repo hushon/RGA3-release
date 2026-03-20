@@ -348,6 +348,8 @@ def process_video_with_visual_prompting(video_file, question_text, progress=gr.P
         torch.cuda.empty_cache()
         
         # Step 6: Create frames with visual prompt
+        blended_frames = None
+        propagated_frames = None
         if use_stom and propagator is not None:
             progress(0.75, desc="Propagating visual prompt across frames...")
             try:
@@ -437,15 +439,32 @@ def process_video_with_visual_prompting(video_file, question_text, progress=gr.P
                     else:
                         propagated_frames.append(frame_pil)
             cap.release()
+
+        # Decide which frame sequence to use for each output video
+        static_vip_frames = blended_frames if blended_frames is not None else propagated_frames
         
         progress(0.80, desc="Creating output video...")
         
-        vip_basename = f"vip_video_{int(time.time() * 1000)}_{hashlib.md5((video_file + question_text).encode('utf-8')).hexdigest()[:8]}.mp4"
-        vip_video_path = os.path.join(args.vis_save_path, vip_basename)
-        vip_video_path = create_video_from_frames(propagated_frames, vip_video_path)
-        if not vip_video_path:
-            return None, blended_frame, None, "Failed to create visual prompt video file."
-        vip_video_path = os.path.abspath(vip_video_path)
+        # Static visual prompt video (key-frame overlay only)
+        vip_static_basename = f"vip_static_{int(time.time() * 1000)}_{hashlib.md5((video_file + question_text).encode('utf-8')).hexdigest()[:8]}.mp4"
+        vip_static_path = os.path.join(args.vis_save_path, vip_static_basename)
+        vip_static_path = create_video_from_frames(static_vip_frames, vip_static_path)
+        if not vip_static_path:
+            return None, None, blended_frame, None, "Failed to create static visual prompt video file."
+        vip_static_path = os.path.abspath(vip_static_path)
+
+        # STOM propagation video (if available, otherwise fall back to static)
+        vip_stom_path = None
+        if use_stom and propagator is not None and propagated_frames is not None:
+            vip_stom_basename = f"vip_stom_{int(time.time() * 1000)}_{hashlib.md5((video_file + question_text).encode('utf-8')).hexdigest()[:8]}.mp4"
+            vip_stom_path = os.path.join(args.vis_save_path, vip_stom_basename)
+            vip_stom_path = create_video_from_frames(propagated_frames, vip_stom_path)
+            if not vip_stom_path:
+                vip_stom_path = vip_static_path
+            else:
+                vip_stom_path = os.path.abspath(vip_stom_path)
+        else:
+            vip_stom_path = vip_static_path
         
         torch.cuda.empty_cache()
         
@@ -511,7 +530,7 @@ def process_video_with_visual_prompting(video_file, question_text, progress=gr.P
 
 🤖 Answer: {qa_output}"""
         
-        return vip_video_path, blended_frame, qa_output, status_msg
+        return vip_static_path, vip_stom_path, blended_frame, qa_output, status_msg
         
     except Exception as e:
         import traceback
@@ -523,7 +542,7 @@ def create_video_from_frames(frames, output_path, fps=15):
     try:
         if not frames:
             return None
-        
+
         first_frame = frames[0]
         if isinstance(first_frame, Image.Image):
             width, height = first_frame.size
@@ -531,18 +550,84 @@ def create_video_from_frames(frames, output_path, fps=15):
         else:
             height, width = first_frame.shape[:2]
             frames_array = frames
-        
+
+        # Step 1: write video using OpenCV (mp4v or fallback) so we always get a file
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
+
+        if not out.isOpened():
+            # Fallback to MJPG in case mp4v is not available
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            output_avi = os.path.splitext(output_path)[0] + '.avi'
+            out = cv2.VideoWriter(output_avi, fourcc, fps, (width, height))
+            output_path = output_avi
+
         for frame in frames_array:
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             else:
                 frame_bgr = frame
             out.write(frame_bgr)
-        
+
         out.release()
+
+        # Step 2: if ffmpeg is available, re-encode to a browser-friendly format
+        try:
+            import shutil
+            import subprocess
+
+            ffmpeg_path = shutil.which("ffmpeg")
+            if ffmpeg_path is not None:
+                base_path, _ = os.path.splitext(output_path)
+
+                # 2-1) Try H.264 (libx264) mp4 first
+                h264_target = base_path + "_h264.mp4"
+                h264_cmd = [
+                    ffmpeg_path,
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    output_path,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    h264_target,
+                ]
+
+                try:
+                    subprocess.run(h264_cmd, check=True)
+                    output_path = h264_target
+                except Exception:
+                    # 2-2) If libx264 is unavailable, fall back to VP9 WebM (libvpx-vp9)
+                    vp9_target = base_path + "_vp9.webm"
+                    vp9_cmd = [
+                        ffmpeg_path,
+                        "-y",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        output_path,
+                        "-c:v",
+                        "libvpx-vp9",
+                        "-b:v",
+                        "0",
+                        "-crf",
+                        "30",
+                        vp9_target,
+                    ]
+
+                    try:
+                        subprocess.run(vp9_cmd, check=True)
+                        output_path = vp9_target
+                    except Exception as e2:
+                        print(f"Warning: ffmpeg VP9 re-encode failed or unavailable: {e2}")
+        except Exception as e:
+            print(f"Warning: ffmpeg re-encode failed or unavailable: {e}")
+
         return output_path
     except Exception as e:
         print(f"Error creating video: {e}")
@@ -927,6 +1012,10 @@ seg_examples = [
     ["./assets/cat.mp4", "Can you segment the place where the cat stands in this video."]
 ]
 
+vip_examples = [
+    ["./assets/cat.mp4", "Where is the cat?"]
+]
+
 title = "🎥 Object-centric Video Question Answering with Visual Grounding and Referring"
 description = """
 <div style="text-align: center; margin-bottom: 10px;">
@@ -1138,12 +1227,22 @@ with gr.Blocks(title=title, theme=gr.themes.Soft()) as demo:
                 
                 with gr.Column(scale=2):
                     with gr.Group():
-                        gr.Markdown("### 🎬 Visual Prompt Video")
-                        vip_result_video = gr.Video(
-                            label="Video with Visual Prompt",
-                            interactive=False,
-                            height=300
-                        )
+                        gr.Markdown("### 🎬 Visual Prompt Videos")
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown("**Static Visual Prompt (key-frame overlay)**")
+                                vip_result_video = gr.Video(
+                                    label="Static Visual Prompt Video",
+                                    interactive=False,
+                                    height=260
+                                )
+                            with gr.Column():
+                                gr.Markdown("**STOM Propagation Video**")
+                                vip_stom_video = gr.Video(
+                                    label="STOM Propagated Video",
+                                    interactive=False,
+                                    height=260
+                                )
                         
                         gr.Markdown("### 🖼️ Key Frame with Overlay")
                         vip_key_frame = gr.Image(
@@ -1167,11 +1266,18 @@ with gr.Blocks(title=title, theme=gr.themes.Soft()) as demo:
                             interactive=False,
                             placeholder="Status will appear here..."
                         )
+
+            with gr.Group():
+                gr.Markdown("### 💡 Examples")
+                gr.Examples(
+                    examples=vip_examples,
+                    inputs=[vip_video_input, vip_question_input],
+                )
             
             vip_submit_btn.click(
                 fn=process_video_with_visual_prompting,
                 inputs=[vip_video_input, vip_question_input],
-                outputs=[vip_result_video, vip_key_frame, vip_answer_output, vip_status_text]
+                outputs=[vip_result_video, vip_stom_video, vip_key_frame, vip_answer_output, vip_status_text]
             )
 
 

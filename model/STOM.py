@@ -15,7 +15,7 @@ class STOM:
     def __init__(
         self,
         device='cpu',
-        ckpt="/PATH/TO/co-tracker/checkpoints/scaled_offline.pth",
+        ckpt="/opt/conda/envs/rga3/lib/python3.10/site-packages/cotracker/checkpoints/scaled_offline.pth",
     ):
         self.device = device
         self.model = CoTrackerPredictor(checkpoint=ckpt).to(device)
