@@ -161,7 +161,8 @@ def question_to_segmentation_prompt(question: str) -> str:
     """Convert NExT-QA question to segmentation prompt"""
     question = question.strip()
     # prompt = f"Can you segment the key object mentioned in this question? Question: {question}"
-    prompt = f"Segment the main subject (the person or object performing the primary action) in this question: {question}"
+    # prompt = f"Segment the main subject (the person or object performing the primary action) in this question: {question}"
+    prompt = f"Can you segment everything mentioned in this prompt? \"{question}\""
     return prompt
 
 
