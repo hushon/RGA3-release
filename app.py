@@ -1008,6 +1008,302 @@ def process_video_segmentation(video_file, query_text, progress=gr.Progress()):
         traceback.print_exc()
         return None, None, f"Error during segmentation: {str(e)}"
 
+
+def prepare_uploaded_frames_directory(uploaded_files):
+    """
+    Prepare a temporary directory with uploaded frame images organized by frame index.
+    
+    Args:
+        uploaded_files: List of file paths from Gradio file upload component
+        
+    Returns:
+        (frame_dir_path, num_frames, error_msg): Tuple of directory path, number of frames, or error message
+    """
+    try:
+        if not uploaded_files:
+            return None, 0, "No files uploaded"
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix="gradio_frames_")
+        
+        # Organize uploaded files by frame index
+        frame_files = {}
+        for file_path in uploaded_files:
+            filename = os.path.basename(file_path)
+            
+            # Try to extract frame index from filename
+            # Supports formats like: frame_0.jpg, frame_1.jpg, 0.jpg, etc.
+            try:
+                # Try "frame_X" format
+                if filename.lower().startswith("frame_"):
+                    frame_num = int(os.path.splitext(filename)[0].split("_")[-1])
+                else:
+                    # Try to parse just the number before extension
+                    frame_num = int(os.path.splitext(filename)[0])
+                
+                frame_files[frame_num] = file_path
+            except (ValueError, IndexError):
+                # If we can't parse the frame number, use the file modification time as fallback
+                mtime = os.path.getmtime(file_path)
+                frame_files[mtime] = file_path
+        
+        # Sort by frame index and copy to temp directory with normalized names
+        sorted_frames = sorted(frame_files.items())
+        for new_idx, (_, src_path) in enumerate(sorted_frames):
+            # Use normalized filename: frame_0.jpg, frame_1.jpg, etc.
+            dst_filename = f"frame_{new_idx}.jpg"
+            dst_path = os.path.join(temp_dir, dst_filename)
+            shutil.copy2(src_path, dst_path)
+        
+        return temp_dir, len(sorted_frames), None
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None, 0, f"Error preparing frames: {str(e)}"
+
+
+def process_uploaded_frames_segmentation(uploaded_files, prompt_text, progress=gr.Progress()):
+    """
+    Process uploaded frame images for segmentation.
+    
+    Args:
+        uploaded_files: List of image files uploaded by user
+        prompt_text: User-provided segmentation prompt text
+        progress: Gradio progress callback
+        
+    Returns:
+        (original_video_path, masks_video_path, overlay_video_path, status_message)
+    """
+    frame_dir_path = None
+    try:
+        if not uploaded_files:
+            return None, None, None, "Please upload frame images."
+        
+        if not prompt_text or not prompt_text.strip():
+            return None, None, None, "Please enter a segmentation prompt."
+        
+        progress(0, desc="Preparing uploaded frames...")
+        
+        # Prepare frames directory
+        frame_dir_path, num_frames, error_msg = prepare_uploaded_frames_directory(uploaded_files)
+        if error_msg:
+            return None, None, None, error_msg
+        
+        if num_frames == 0:
+            return None, None, None, "No valid frame images found in upload."
+        
+        progress(0.1, desc=f"Loading {num_frames} frames...")
+        
+        # Load frames from the prepared directory
+        frame_files = sorted(
+            os.listdir(frame_dir_path),
+            key=lambda x: int(os.path.splitext(x)[0].split("_")[-1])
+        )
+        
+        total_frames = len(frame_files)
+        
+        # Get sparse frames for MLLM context
+        sparse_idxs = get_sparse_indices(total_frames, args.num_frames_mllm)
+        
+        progress(0.15, desc="Processing sparse frames for model context...")
+        
+        frames_list = []
+        for frm_idx in sparse_idxs:
+            try:
+                frame_path = os.path.join(frame_dir_path, frame_files[frm_idx])
+                frame_img = Image.open(frame_path)
+                frames_list.append(frame_img)
+            except Exception as e:
+                print(f"Warning: Failed to load frame {frm_idx}: {e}")
+        
+        if not frames_list:
+            return None, None, None, "Failed to load any frames."
+        
+        progress(0.20, desc="Loading all frames for segmentation...")
+        
+        # Load all frames for SAM processing
+        image_list_sam, image_list_np = [], []
+        original_size_list = []
+        resize_list = []
+        
+        for frame_fname in frame_files:
+            try:
+                frame_path = os.path.join(frame_dir_path, frame_fname)
+                frame_img = Image.open(frame_path)
+                image_np = np.array(frame_img)
+                original_size_list.append(image_np.shape[:2])
+                
+                # Apply transform
+                image = transform.apply_image(image_np)
+                resize_list.append(image.shape[:2])
+                
+                # Preprocess and convert to tensor
+                image_tensor = preprocess(torch.from_numpy(image).permute(2, 0, 1).contiguous()).unsqueeze(0)
+                image_tensor = image_tensor.bfloat16()
+                
+                image_list_sam.append(image_tensor)
+                image_list_np.append(image_np)
+            except Exception as e:
+                print(f"Warning: Failed to process frame {frame_fname}: {e}")
+        
+        if not image_list_sam:
+            return None, None, None, "Failed to process any frames."
+        
+        progress(0.30, desc="Preparing model inputs...")
+        
+        # Use the user input directly as the segmentation prompt.
+        prompt = prompt_text.strip()
+        
+        # Prepare messages for model
+        messages = [
+            {"role": "user", "content": [
+                {"type": "video", "video": frames_list, "max_pixels": args.max_pixels},
+                {"type": "text", "text": prompt}
+            ]},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "Sure, [SEG]."}
+            ]}
+        ]
+        
+        text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False
+        )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        inputs = processor(
+            text=text,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+            **video_kwargs,
+        )
+        
+        inputs = dict_to_cuda(inputs)
+        
+        progress(0.45, desc="Running segmentation inference...")
+        
+        # Run segmentation
+        input_ids = inputs['input_ids']
+        attention_mask = inputs.get('attention_mask', None)
+        pixel_values = inputs.get('pixel_values', None)
+        if pixel_values is not None:
+            pixel_values = pixel_values.bfloat16()
+        pixel_values_videos = inputs.get('pixel_values_videos', None)
+        if pixel_values_videos is not None:
+            pixel_values_videos = pixel_values_videos.bfloat16()
+        image_grid_thw = inputs.get('image_grid_thw', None)
+        video_grid_thw = inputs.get('video_grid_thw', None)
+        second_per_grid_ts = inputs.get('second_per_grid_ts', None)
+        
+        image_sam = torch.stack(image_list_sam, dim=1).cuda()
+        
+        with torch.inference_mode():
+            output_ids, pred_masks = model.evaluate(
+                input_ids,
+                attention_mask,
+                pixel_values,
+                pixel_values_videos,
+                image_grid_thw,
+                video_grid_thw,
+                second_per_grid_ts,
+                image_sam,
+                resize_list,
+                original_size_list,
+            )
+        
+        progress(0.65, desc="Processing segmentation masks...")
+        
+        # Process masks and create visualization frames
+        segmented_frames = []
+        mask_frames = []
+        original_frames = []
+        
+        if len(pred_masks) > 0 and pred_masks[0].shape[0] > 0:
+            pred_mask_vid = pred_masks[0]
+            mask_color = np.array([255, 0, 0])  # Red color for masks
+            
+            for frame_idx in range(min(total_frames, pred_mask_vid.shape[0], len(image_list_np))):
+                try:
+                    pred_mask = pred_mask_vid.detach().cpu().numpy()[frame_idx]
+                    pred_mask = pred_mask > 0
+                    
+                    # Create mask visualization (white mask on black background)
+                    mask_vis = np.zeros_like(image_list_np[frame_idx])
+                    mask_vis[pred_mask] = 255  # White mask
+                    mask_frames.append(Image.fromarray(mask_vis.astype(np.uint8)))
+                    
+                    # Create overlay visualization (red overlay on original)
+                    overlay_img = image_list_np[frame_idx].copy().astype(np.float32)
+                    overlay_img[pred_mask] = (
+                        image_list_np[frame_idx][pred_mask].astype(np.float32) * 0.5 + 
+                        mask_color * 0.5
+                    )
+                    segmented_frames.append(Image.fromarray(overlay_img.astype(np.uint8)))
+                    
+                    # Also keep original frames for video output
+                    original_frames.append(Image.fromarray(image_list_np[frame_idx].astype(np.uint8)))
+                except Exception as e:
+                    print(f"Warning: Failed to process mask for frame {frame_idx}: {e}")
+        
+        if not mask_frames:
+            return None, None, None, "No segmentation masks were generated. Please try a different query."
+        
+        progress(0.80, desc="Creating output videos...")
+        
+        # Create video outputs
+        original_video_path = os.path.join(args.vis_save_path, f"original_frames_{int(time.time() * 1000)}.mp4")
+        masks_video_path = os.path.join(args.vis_save_path, f"masks_{int(time.time() * 1000)}.mp4")
+        overlay_video_path = os.path.join(args.vis_save_path, f"overlay_{int(time.time() * 1000)}.mp4")
+        
+        original_video_path = create_video_from_frames(original_frames, original_video_path)
+        masks_video_path = create_video_from_frames(mask_frames, masks_video_path)
+        overlay_video_path = create_video_from_frames(segmented_frames, overlay_video_path)
+        
+        if not (original_video_path and masks_video_path and overlay_video_path):
+            return None, None, None, "Failed to create output videos."
+        
+        torch.cuda.empty_cache()
+        
+        progress(1.0, desc="Complete!")
+        
+        status_msg = f"""✅ Frame Segmentation Complete!
+
+📊 Summary:
+  - Total frames processed: {total_frames}
+  - Sparse frames for MLLM: {len(sparse_idxs)}
+  - Segmentation masks generated: {len(mask_frames)}
+
+🎯 Prompt Input: {prompt_text}
+💬 Prompt: {prompt}
+
+📁 Output:
+  - Original frames video: {num_frames} frames
+  - Segmentation masks video: {len(mask_frames)} frames
+  - Overlay video: {len(segmented_frames)} frames
+"""
+        
+        return (
+            original_video_path,
+            masks_video_path,
+            overlay_video_path,
+            status_msg
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None, None, None, f"Error during segmentation: {str(e)}"
+    
+    finally:
+        # Clean up temporary directory
+        if frame_dir_path and os.path.exists(frame_dir_path):
+            try:
+                shutil.rmtree(frame_dir_path)
+            except Exception as e:
+                print(f"Warning: Failed to clean up temporary directory {frame_dir_path}: {e}")
+
+
 qa_examples = [
     ["./assets/cat.mp4", "Look at the marked region and then answer the question. What is it?"]
 ]
