@@ -6,6 +6,8 @@ from glob import glob
 import hashlib
 import time
 import types
+import tempfile
+import shutil
 
 # Disable flash attention BEFORE any transformers import
 # Create fake module to prevent flash_attn binary from being loaded
