@@ -467,7 +467,7 @@ def batch_process(args):
         # Save mask PNG sequences
         try:
             for frame_idx, mask in masks_dict.items():
-                mask_filename = f"{video_id}_frame_{frame_idx:06d}_mask.png"
+                mask_filename = f"frame_{frame_idx}.png"
                 mask_path = os.path.join(video_output_dir, mask_filename)
                 cv2.imwrite(mask_path, mask)
             
