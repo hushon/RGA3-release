@@ -90,3 +90,4 @@ all_runs/
 checkpoints/
 vis_output/
 .gradio/
+next_qa_segmentation*
