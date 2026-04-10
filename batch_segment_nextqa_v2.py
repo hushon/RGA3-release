@@ -437,7 +437,7 @@ def batch_process(args):
         os.makedirs(video_output_dir, exist_ok=True)
         
         # Check if already processed
-        metadata_path = os.path.join(video_output_dir, f"{video_id}_metadata.json")
+        metadata_path = os.path.join(video_output_dir, f"metadata.json")
         if os.path.exists(metadata_path):
             success_count += 1
             continue
