@@ -183,7 +183,11 @@ def segment_video(
     """
     try:
         # Load JPG frames from directory
-        frame_files = sorted(os.listdir(frame_dir_path))
+        # frame_files = sorted(os.listdir(frame_dir_path))
+        frame_files = sorted(
+            os.listdir(frame_dir_path),
+            key=lambda x: int(os.path.splitext(x)[0].split("_")[-1])
+        )
         if not frame_files:
             return None, None, None, f"No frames found in {frame_dir_path}"
         
