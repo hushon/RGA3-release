@@ -398,7 +398,8 @@ def batch_process(args):
     
     # Initialize STOM
     print("\nInitializing STOM for temporal propagation...")
-    if args.enable_stom:
+    # if args.enable_stom:
+    if False:
         propagator = STOM(device="cuda:0")
         use_stom = True
         print("STOM initialized successfully!")
