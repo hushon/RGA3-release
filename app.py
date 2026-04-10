@@ -1508,6 +1508,85 @@ with gr.Blocks(title=title, theme=gr.themes.Soft()) as demo:
                 outputs=[seg_result_video, mask_result_video, seg_status_text]
             )
 
+        with gr.TabItem("📸 Interactive Frame Segmentation"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    with gr.Group():
+                        gr.Markdown("### 📤 Inputs")
+                        gr.Markdown("Upload 32 frame images (JPG/PNG) with naming format: frame_0.jpg, frame_1.jpg, ... frame_31.jpg (or any sequential naming)")
+                        frame_files_input = gr.File(
+                            label="Upload Frame Images",
+                            file_count="multiple",
+                            file_types=[".jpg", ".jpeg", ".png"],
+                        )
+                        frame_prompt_input = gr.Textbox(
+                            lines=3,
+                            placeholder="Enter segmentation prompt directly (e.g., 'Segment the person in the center' or 'Can you segment the red ball?')...",
+                            label="Prompt",
+                        )
+                        frame_submit_btn = gr.Button("🎯 Start Segmentation", variant="primary", size="lg")
+                
+                with gr.Column(scale=2):
+                    with gr.Group():
+                        gr.Markdown("### 🎬 Results")
+                        frame_status_text = gr.Textbox(
+                            lines=5,
+                            label="Status",
+                            interactive=False,
+                            placeholder="Upload frames and enter a prompt to start segmentation..."
+                        )
+                        
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown("**Original Frames**")
+                                frame_original_video = gr.Video(
+                                    label="Original Frame Sequence",
+                                    interactive=False,
+                                    height=280
+                                )
+                            
+                            with gr.Column():
+                                gr.Markdown("**Segmentation Masks**")
+                                frame_mask_video = gr.Video(
+                                    label="Segmentation Masks",
+                                    interactive=False,
+                                    height=280
+                                )
+                        
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown("**Overlay Visualization**")
+                                frame_overlay_video = gr.Video(
+                                    label="Overlay on Original Frames",
+                                    interactive=False,
+                                    height=280
+                                )
+            
+            gr.Markdown("""
+### 📋 Instructions:
+1. **Prepare your frames**: Extract 32 frames from a video using any video processing tool
+2. **Name your files**: Use format like `frame_0.jpg`, `frame_1.jpg`, ..., `frame_31.jpg`
+   - Alternative formats like `0.jpg`, `1.jpg` or `image_0.png`, `image_1.png` also work
+3. **Upload frames**: Click "Upload Frame Images" and select all 32 frames
+4. **Enter prompt**: Type the segmentation prompt directly (no template conversion)
+5. **Run segmentation**: Click "Start Segmentation" to process
+6. **View results**: 
+   - Original Frames: Your input frames as a video
+   - Segmentation Masks: White masks on black background
+   - Overlay: Segmentation overlaid on original frames
+
+### 💡 Tips:
+- Works best with clear, distinct objects in the video
+- Use clear prompts for better segmentation results
+- The model processes up to 32 frames, fewer frames also work
+""")
+            
+            frame_submit_btn.click(
+                fn=process_uploaded_frames_segmentation,
+                inputs=[frame_files_input, frame_prompt_input],
+                outputs=[frame_original_video, frame_mask_video, frame_overlay_video, frame_status_text]
+            )
+
         with gr.TabItem("✨ Visual Prompting for QA"):
             with gr.Row():
                 with gr.Column(scale=1):
