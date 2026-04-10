@@ -433,7 +433,7 @@ def batch_process(args):
             continue
         
         # Create output directory for this video
-        video_output_dir = os.path.join(args.output_dir, video_id)
+        video_output_dir = os.path.join(args.output_dir, f"{video_id}_{qid}")
         os.makedirs(video_output_dir, exist_ok=True)
         
         # Check if already processed
