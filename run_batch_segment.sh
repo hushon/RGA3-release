@@ -1,0 +1,1 @@
+python batch_segment_nextqa.py   --version ./checkpoints/UniGR-7B   --anno_path ../nextqa/annotations_mc/val.csv   --output_dir ./next_qa_segmentation_masks --num_videos -1
