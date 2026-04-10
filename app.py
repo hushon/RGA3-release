@@ -865,6 +865,8 @@ def process_video_segmentation(video_file, query_text, progress=gr.Progress()):
         image_list_sam, image_list_np = [], []
         
         for frm_idx in range(total_frames):
+            if frm_idx not in sparse_idxs:
+                continue
             ret, frame = cap.read()
             if not ret:
                 break
