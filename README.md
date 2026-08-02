@@ -5,9 +5,10 @@
 
 </div>
 
-## News
-* **[2025-07]** We have released the paper, codes, datasets, and checkpoints.
-
+This repository provides an interactive NextQA demo for VideoQA with uncertainty-aware visual prompting.
+It is designed to let a user enter a VideoQA question, generate visual prompted keyframes through a keyframe selection module and a mask generation module, and then run LMM inference to produce both an answer and an uncertainty score.
+If the uncertainty suggests that the prediction should be revisited, the user can intervene at the mask generation stage, regenerate the visual prompts with a human-selected mask, and run inference again to obtain the final result.
+The demo uses RGA3 for question answering and SAM2 for grounding and mask prediction.
 
 ## Environment
 
