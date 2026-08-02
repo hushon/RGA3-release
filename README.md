@@ -12,22 +12,8 @@ The demo uses RGA3 for question answering and SAM2 for grounding and mask predic
 
 ## Environment
 
-First create conda environment according to your CUDA version.
-```
-conda create -n rga3 python=3.10.16 -y
-conda activate rga3
-conda install pytorch==2.5.1 torchvision==0.20.1 pytorch-cuda=12.4 -c pytorch -c nvidia
-
-pip install --upgrade pip  # enable PEP 660 support 
-pip install -r requirements.txt
-
-pip install ninja
-pip install flash-attn --no-build-isolation
-```
-
-Then you need to install the [SAM2](https://github.com/facebookresearch/sam2?tab=readme-ov-file#installation) package. In our implementation, the version of core packages are `torch==2.5.1+cu124`, `flash_attn==2.7.4post1`.
-
-Then, install the [CoTracker3](https://github.com/facebookresearch/co-tracker?tab=readme-ov-file#install-a-development-version) package. Afterwards, install the following packages.
+We recommend using the Docker image `hushon/rga3` for the demo and environment setup.
+After entering the Docker container, activate the conda environment with `conda activate rga3` before running the demo.
 
 ```bash
 apt update && apt install openjdk-11-jdk -y && apt install zip
