@@ -16,40 +16,18 @@ We recommend using the Docker image `hushon/rga3` for the demo and environment s
 After entering the Docker container, activate the conda environment with `conda activate rga3` before running the demo.
 
 ```bash
-apt update && apt install openjdk-11-jdk -y && apt install zip
+docker run --gpus all -it --rm -v $PWD:/workspace -w /workspace hushon/rga3 bash
+conda activate rga3
 ```
 
-**Trouble Shooting**:
-Since we adopt an early version of Qwen2.5-VL (4.49.0.dev0 for HuggingFace), some bfloat16 problems should be manually addressed, according to this [issue](https://github.com/QwenLM/Qwen2.5-VL/issues/706).
+If you prefer to build the environment manually, please refer to the original project: https://github.com/qirui-chen/RGA3-release.
+
+Next, download the [RGA3 checkpoints 🤗](https://huggingface.co/SurplusDeficit/UniGR-7B) and place them in `./checkpoints/UniGR-7B/` under the project root.
 
 
-## Demo
+## NextQA Demo
 
-After downloading checkpoints & installing environments, you can open an interface to inference via Gradio.
-
-```bash
-python app.py --version /PATH/TO/UniGR-7B
-```
-
-![demo](assets/demo.gif)
-
-
-## Prepare Datasets
-
-You can check the used training datasets and the corresponding sampling rate in `run_torchrun.sh` and `utils/dataset.py`.
-
-- For image segmentation datasets, please refer to [LISA](https://github.com/dvlab-research/LISA/tree/main?tab=readme-ov-file#training-data-preparation).
-- For video segmentation datasets, please refer to [VideoLISA](https://github.com/showlab/VideoLISA/blob/main/README.md#prepare-data-for-training) & [ReVOS](https://github.com/cilinyan/ReVOS-api).
-- For region-level image question-answering datasets, please refer to [ViP-LLaVA](https://github.com/WisconsinAIVision/ViP-LLaVA?tab=readme-ov-file#visual-instruction-tuning) & [Osprey](https://github.com/CircleRadon/Osprey?tab=readme-ov-file#dataset-).
-- For region-level video question-answering datasets, you can download from [VideoInfer](https://www.dropbox.com/scl/fo/9mcd1yrf8ca8b5heziqz4/AKfHt8pYjPvi0_kQUk8hx9o?rlkey=e7p4d0v3e2zuih7rbsuynrmd0&st=nqd8bhym&dl=0) & [VideoRefer-Bench](https://github.com/DAMO-NLP-SG/VideoRefer?tab=readme-ov-file#%EF%B8%8F-videorefer-bench).
-- For general question-answering datasets, you can download from [LLaVA](https://github.com/haotian-liu/LLaVA/blob/main/docs/Data.md) & [LLaVA-Video](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K).
-
-You should replace the absolute path in the code with the actual saved path on your machine.
-
-
-### VideoInfer Structure
-
-The train/test spliting of [VideoInfer](https://www.dropbox.com/scl/fo/9mcd1yrf8ca8b5heziqz4/AKfHt8pYjPvi0_kQUk8hx9o?rlkey=e7p4d0v3e2zuih7rbsuynrmd0&st=nqd8bhym&dl=0) follows ReVOS to avoid data leakage between segmentation and question-answering.
+After downloading checkpoints and preparing the environment, run the NextQA demo from the project root with:
 
 ```bash
 VideoInfer-Release
