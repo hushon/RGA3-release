@@ -1,5 +1,5 @@
 <div align="center">
-<h1> Object-centric Video Question Answering with Visual Grounding and Referring </h1>
+<h1> VideoQA with visual prompting </h1>
 
 [🏡 Project Page](https://qirui-chen.github.io/RGA3-release) |  [📄 Paper](https://arxiv.org/abs/2507.19599) | [📦 VideoInfer Dataset](https://www.dropbox.com/scl/fo/9mcd1yrf8ca8b5heziqz4/AKfHt8pYjPvi0_kQUk8hx9o?rlkey=e7p4d0v3e2zuih7rbsuynrmd0&st=nqd8bhym&dl=0) | [🤗 RGA3 Checkpoints](https://huggingface.co/SurplusDeficit/UniGR-7B)
 
