@@ -34,6 +34,7 @@ python app_nextqa.py --version ./checkpoints/UniGR-7B
 ```
 
 This launches the Gradio demo interface for NextQA inference.
+An example input is provided at the bottom of the page.
 The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
 ## Acknowledgements
