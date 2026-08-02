@@ -27,7 +27,7 @@ Next, download the [RGA3 checkpoints 🤗](https://huggingface.co/SurplusDeficit
 
 ## Launch the demo
 
-After downloading checkpoints and preparing the environment, run the NextQA demo from the project root with:
+After downloading checkpoints and preparing the environment, run the demo from the project root with:
 
 ```bash
 python app_nextqa.py --version ./checkpoints/UniGR-7B
