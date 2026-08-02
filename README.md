@@ -30,86 +30,14 @@ Next, download the [RGA3 checkpoints 🤗](https://huggingface.co/SurplusDeficit
 After downloading checkpoints and preparing the environment, run the NextQA demo from the project root with:
 
 ```bash
-VideoInfer-Release
-├── frames                        # all images of the train set and test set
-├── visual_prompts                # fixed visual prompts for the test set
-├── mask_dict.json                # mask dict (train set & test set)
-├── train.json                    # QA pairs & masks for generating visual prompts (train set)
-└── test.json                     # QA pairs & fixed visual prompts (test set)
+python app_nextqa.py --version ./checkpoints/UniGR-7B
 ```
 
+This launches the Gradio demo interface for NextQA inference.
+The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
-## Training
+## Acknowledgements
 
-Our original training is conducted on 8xH800 (80G) of 2 nodes for about 1 day.
-
-```bash
-bash run_torchrun.sh
-```
-
-After training, you should merge LoRA weights:
-
-```bash
-bash merge.sh
-```
-
-
-## Evaluation
-
-You can check the details of each benchmark in the `evaluation` folder. Before executing the inference and evaluation commands, you may change the codes with the actual dataset paths.
-
-### Video Segmentation
-
-For example, when evaluating on MeViS, you should
-```bash
-cd RGA3-release
-
-# Step 1
-bash evaluation/mevis_val_u/run_inference_mevis.sh
-
-# Step 2
-bash evaluation/mevis_val_u/run_eval_mevis.sh
-```
-
-**Trouble Shooting**:
-The inference script we adopted from VideoLISA may skip some samples, so you may need to execute Step 1 more than once before executing Step 2.
-
-### VideoRefer-Bench<sup>Q</sup>
-
-To evaluate RGA3 on VideoRefer-Bench<sup>Q</sup>, execute following command and the calculated accuracy will be printed.
-
-```bash
-bash evaluation/videorefer_bench/run_inference_videorefer.sh
-```
-
-
-### VideoInfer
-
-To evaluate RGA3 on the VideoInfer test split, you should execute the following commands:
-
-```bash
-bash evaluation/videoinfer/run_inference_parallel.sh
-```
-This step will conduct inference and offline metric calculation, such as BLEU-4, saving predicted answers and ground truth answers. Afterwards, to obtain GPT4 accuracy/score, you can refer to `eval_gpt.ipynb`, where we implement the evaluation through OpenAI batch inference. However, you can re-implement it while keeping the original prompt and model version according to your API provider.
-
-We also provide the evaluation scripts of several baseline methods in the `baselines` folder.
-
-
-## Citation
-
-If you find this paper or repo helpful, you can use the following format to cite:
-```bibtex
-@article{wang2025object,
-  title={Object-centric Video Question Answering with Visual Grounding and Referring},
-  author={Wang, Haochen and Chen, Qirui and Yan, Cilin and Cai, Jiayin and Jiang, Xiaolong and Hu, Yao and Xie, Weidi and Gavves, Stratis},
-  journal={arXiv preprint arXiv:2507.19599},
-  year={2025}
-}
-```
-
-
-## 🫡 Acknowledgements
-
-- Our codes are based on [LISA](https://github.com/dvlab-research/LISA/) & [VideoLISA](https://github.com/showlab/VideoLISA/). The copyright for adding language embedding in SAM2 belongs to [Sa2VA](https://github.com/magic-research/Sa2VA). The implementation of generating and processing visual prompts is based on [ViP-LLaVA](https://github.com/WisconsinAIVision/ViP-LLaVA).
+- Our codes are based on the original [RGA3-release](https://github.com/qirui-chen/RGA3-release) project, [LISA](https://github.com/dvlab-research/LISA/) & [VideoLISA](https://github.com/showlab/VideoLISA/). The copyright for adding language embedding in SAM2 belongs to [Sa2VA](https://github.com/magic-research/Sa2VA). The implementation of generating and processing visual prompts is based on [ViP-LLaVA](https://github.com/WisconsinAIVision/ViP-LLaVA).
 
 - We also thank the open-source projects like [Qwen2.5-VL](https://github.com/QwenLM/Qwen2.5-VL), [CoTracker3](https://github.com/facebookresearch/co-tracker) and [SAM2](https://github.com/facebookresearch/sam2).
