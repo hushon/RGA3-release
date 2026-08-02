@@ -25,7 +25,7 @@ If you prefer to build the environment manually, please refer to the original pr
 Next, download the [RGA3 checkpoints 🤗](https://huggingface.co/SurplusDeficit/UniGR-7B) and place them in `./checkpoints/UniGR-7B/` under the project root.
 
 
-## NextQA Demo
+## Launch the demo
 
 After downloading checkpoints and preparing the environment, run the NextQA demo from the project root with:
 
