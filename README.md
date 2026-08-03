@@ -12,7 +12,7 @@ The demo uses RGA3 for question answering and SAM2 for grounding and mask predic
 
 ## Environment
 
-We recommend using the Docker image `hushon/rga3` for the demo and environment setup.
+We recommend using the Docker image `hushon/rga3` ([view on Dockerhub](https://hub.docker.com/r/hushon/rga3)) for the demo and environment setup. 
 After entering the Docker container, you should activate the conda environment with `conda activate rga3` before running the code.
 
 ```bash
@@ -51,8 +51,9 @@ For examples, an example QA is:
 
 A complete example input is provided at the bottom of the page.
 
-During the model prediction, the model generates visual prompts by predicting segmentation masks related to the QA problem. 
-After the initial inference, the human user can decide to intervene and prompt the model to generate more mask proposals. 
+At the initial prediction stage, the model automatically generates visual prompts by predicting segmentation masks related to the QA problem which is then fed to the LMM backbone to generate the answer. 
+Depending on the uncertainty level and the quality of the answer, the human user can decide to intervene and prompt the model to generate more mask proposals. 
+Then, the user can choose the mask that best aligns with the intention of the question, and the model performs the prediction again.
 
 
 ## Acknowledgements
