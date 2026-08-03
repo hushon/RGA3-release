@@ -37,8 +37,7 @@ This launches the Gradio demo interface for VideoQA inference.
 The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
 Submit the question-answer pair and video frames to the model. 
-For examples, an example QA is:
-
+For example:
 ```text
     Question: what does the girls do after kicking their right legs in the middle?
     Answer:
