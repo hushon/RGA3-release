@@ -36,7 +36,8 @@ python app_nextqa.py --version ./checkpoints/UniGR-7B
 This launches the Gradio demo interface for VideoQA inference.
 The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
-An example input is provided at the bottom of the page.
+Submit the question-answer pair and video frames to the model. 
+For examples, an example QA is:
 
 ```text
     Question: what does the girls do after kicking their right legs in the middle?
@@ -47,6 +48,12 @@ An example input is provided at the bottom of the page.
     D: move in circle
     E: run after it
 ```
+
+A complete example input is provided at the bottom of the page.
+
+During the model prediction, the model generates visual prompts by predicting segmentation masks related to the QA problem. 
+After the initial inference, the human user can decide to intervene and prompt the model to generate more mask proposals. 
+
 
 ## Acknowledgements
 
