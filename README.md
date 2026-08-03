@@ -5,7 +5,7 @@
 
 </div>
 
-This repository provides an interactive demo for VideoQA with uncertainty-aware visual prompting using NextQA dataset.
+This repository provides an interactive demo for VideoQA with uncertainty-aware visual prompting using NExT-QA dataset.
 It is designed to let a user enter a VideoQA question, generate visual prompted keyframes through a keyframe selection module and a mask generation module, and then run LMM inference to produce both an answer and an uncertainty score.
 If the uncertainty suggests that the prediction should be revisited, the user can intervene at the mask generation stage, regenerate the visual prompts with a human-selected mask, and run inference again to obtain the final result.
 The demo uses RGA3 for question answering and SAM2 for grounding and mask prediction.
@@ -33,7 +33,7 @@ After downloading checkpoints and preparing the environment, run the demo from t
 python app_nextqa.py --version ./checkpoints/UniGR-7B
 ```
 
-This launches the Gradio demo interface for NextQA inference.
+This launches the Gradio demo interface for VideoQA inference.
 An example input is provided at the bottom of the page.
 The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
