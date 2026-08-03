@@ -34,8 +34,19 @@ python app_nextqa.py --version ./checkpoints/UniGR-7B
 ```
 
 This launches the Gradio demo interface for VideoQA inference.
-An example input is provided at the bottom of the page.
 The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
+
+An example input is provided at the bottom of the page.
+
+```text
+    Question: what does the girls do after kicking their right legs in the middle?
+    Answer:
+    A: dancing
+    B: tap paper on table
+    C: unroll the gold toy
+    D: move in circle
+    E: run after it
+```
 
 ## Acknowledgements
 
