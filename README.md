@@ -22,7 +22,7 @@ conda activate rga3
 
 If you prefer to build the environment manually, please refer to the original project: https://github.com/qirui-chen/RGA3-release.
 
-Next, download the [RGA3 checkpoints 🤗](https://huggingface.co/SurplusDeficit/UniGR-7B) and place them in `./checkpoints/UniGR-7B/` under the project root.
+Next, download the [🤗 RGA3 checkpoints](https://huggingface.co/SurplusDeficit/UniGR-7B) and place them in `./checkpoints/UniGR-7B/` under the project root.
 
 
 ## Launch the demo
