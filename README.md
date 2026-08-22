@@ -12,6 +12,8 @@ The demo uses RGA3 for question answering and SAM2 for grounding and mask predic
 
 ## Environment
 
+This project is tested on a single NVIDIA RTX 4090 (24GB) GPU.
+
 We recommend using the Docker image `hushon/rga3` ([view on Dockerhub](https://hub.docker.com/r/hushon/rga3)) for the demo and environment setup. 
 After entering the Docker container, you should activate the conda environment with `conda activate rga3` before running the code.
 
@@ -34,7 +36,6 @@ python app_nextqa.py --version ./checkpoints/UniGR-7B
 ```
 
 This launches the Gradio demo interface for VideoQA inference.
-The demo was tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
 Submit the question-answer pair and video frames to the model. 
 For example:
