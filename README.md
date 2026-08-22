@@ -15,7 +15,7 @@ The demo uses RGA3 for question answering and SAM2 for grounding and mask predic
 This project is tested on a single NVIDIA RTX 4090 (24GB) GPU.
 
 We recommend using the Docker image `hushon/rga3` ([Docker hub repository](https://hub.docker.com/r/hushon/rga3)) for the demo and environment setup. 
-After entering the Docker container, you should activate the conda environment with `conda activate rga3` before running the code.
+After instantiating the Docker container, activate the conda environment using `$ conda activate rga3` command before running the code.
 
 ```bash
 docker run --gpus all -it --rm -v $PWD:/workspace -w /workspace hushon/rga3 bash
