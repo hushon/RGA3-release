@@ -58,5 +58,8 @@ Then, the user can choose the mask that best aligns with the intention of the qu
 
 ## Acknowledgements
 
+This work was supported by Institute of Information & communications Technology Planning & Evaluation (IITP) grant funded by the Korea government(MSIT). (No. RS-2022-II0951, Development of
+Uncertainty-Aware Agents Learning by Asking Questions)
+
 This project is based on the [RGA3](https://github.com/qirui-chen/RGA3-release) code, [LISA](https://github.com/dvlab-research/LISA/) & [VideoLISA](https://github.com/showlab/VideoLISA/). The copyright for adding language embedding in SAM2 belongs to [Sa2VA](https://github.com/magic-research/Sa2VA). The implementation of generating and processing visual prompts is based on [ViP-LLaVA](https://github.com/WisconsinAIVision/ViP-LLaVA).
 We also thank the open-source projects like [Qwen2.5-VL](https://github.com/QwenLM/Qwen2.5-VL), [CoTracker3](https://github.com/facebookresearch/co-tracker) and [SAM2](https://github.com/facebookresearch/sam2).
